@@ -25,6 +25,7 @@ Encode / decode::
 
 from __future__ import annotations
 
+import heapq
 import json
 import re
 from collections import defaultdict
@@ -126,16 +127,102 @@ class BPETrainer:
         for seq in work:
             self.vocab.update(seq)
 
+        # ------------------------------------------------------------------
+        # Fast incremental BPE training
+        # ------------------------------------------------------------------
+        # pair_counts[pair]  – corpus-wide frequency (kept accurate)
+        # pair_seqs[pair]    – set of sequence indices that contain the pair
+        #                      (may have stale entries; treated as a superset)
+        # heap               – max-heap of (-count, pair) with lazy deletion
+        # ------------------------------------------------------------------
+        pair_counts: dict[tuple[str, str], int] = defaultdict(int)
+        pair_seqs: dict[tuple[str, str], set] = defaultdict(set)
+
+        for si, seq in enumerate(work):
+            for i in range(len(seq) - 1):
+                a, b = seq[i], seq[i + 1]
+                if _is_mergeable(a) and _is_mergeable(b):
+                    pair_counts[(a, b)] += 1
+                    pair_seqs[(a, b)].add(si)
+
+        # Build initial max-heap (negate counts for min-heap machinery)
+        heap: list[tuple[int, tuple[str, str]]] = [
+            (-cnt, pair) for pair, cnt in pair_counts.items()
+        ]
+        heapq.heapify(heap)
+
         for _ in range(max_merges):
-            pairs = _count_pairs(work)
-            if not pairs:
+            # Find the best valid pair (lazy-delete stale heap entries)
+            best_pair: tuple[str, str] | None = None
+            best_count = 0
+            while heap:
+                neg_cnt, pair = heapq.heappop(heap)
+                actual = pair_counts.get(pair, 0)
+                if actual == -neg_cnt and actual > 0:
+                    best_pair = pair
+                    best_count = actual
+                    break
+                # stale entry – discard and try next
+
+            if best_pair is None or best_count < min_freq:
                 break
-            best_pair = max(pairs, key=pairs.__getitem__)
-            if pairs[best_pair] < min_freq:
-                break
-            work = _apply_merge(work, best_pair)
+
+            a, b = best_pair
+            merged = _MERGE_SEP.join(best_pair)
             self.merges.append(best_pair)
-            self.vocab.add(_MERGE_SEP.join(best_pair))
+            self.vocab.add(merged)
+
+            # Remove the pair we just consumed
+            affected = pair_seqs.pop(best_pair, set())
+            del pair_counts[best_pair]
+
+            # Apply merge to every affected sequence and update counts
+            for si in affected:
+                seq = work[si]
+                n = len(seq)
+                new_seq: list[str] = []
+                i = 0
+                while i < n:
+                    if i < n - 1 and seq[i] == a and seq[i + 1] == b:
+                        prev_tok = new_seq[-1] if new_seq else None
+                        rn = seq[i + 2] if i + 2 < n else None
+
+                        # ── remove pair (prev_tok, a) ──────────────────────
+                        if prev_tok is not None and _is_mergeable(prev_tok):
+                            lp = (prev_tok, a)
+                            pair_counts[lp] -= 1
+                            if pair_counts[lp] <= 0:
+                                pair_counts.pop(lp, None)
+
+                        # ── remove pair (b, rn) ────────────────────────────
+                        if rn is not None and _is_mergeable(rn):
+                            rp = (b, rn)
+                            pair_counts[rp] -= 1
+                            if pair_counts[rp] <= 0:
+                                pair_counts.pop(rp, None)
+
+                        new_seq.append(merged)
+
+                        # ── add pair (prev_tok, merged) ────────────────────
+                        if prev_tok is not None and _is_mergeable(prev_tok):
+                            nlp = (prev_tok, merged)
+                            pair_counts[nlp] += 1
+                            pair_seqs[nlp].add(si)
+                            heapq.heappush(heap, (-pair_counts[nlp], nlp))
+
+                        # ── add pair (merged, rn) ──────────────────────────
+                        if rn is not None and _is_mergeable(rn):
+                            nrp = (merged, rn)
+                            pair_counts[nrp] += 1
+                            pair_seqs[nrp].add(si)
+                            heapq.heappush(heap, (-pair_counts[nrp], nrp))
+
+                        i += 2
+                    else:
+                        new_seq.append(seq[i])
+                        i += 1
+
+                work[si] = new_seq
 
         return self
 
