@@ -252,31 +252,40 @@ class BPETokenizer:
     def __init__(self, trainer: BPETrainer) -> None:
         # Ordered list of (a, b) → merged_token rules
         self.merges: list[tuple[str, str]] = list(trainer.merges)
+        # pair → (rank, merged_token): used for O(1) lookup during encode
+        self._merge_rank: dict[tuple[str, str], tuple[int, str]] = {
+            pair: (rank, _MERGE_SEP.join(pair))
+            for rank, pair in enumerate(self.merges)
+        }
         # Fast lookup: merged_token → (a, b)
         self._split_map: dict[str, tuple[str, str]] = {
             _MERGE_SEP.join(pair): pair for pair in self.merges
         }
 
     def encode(self, tokens: list[str]) -> list[str]:
-        """Apply BPE merges to a token sequence.
+        """Apply BPE merges to a token sequence in a single pass.
 
         Non-mergeable tokens (linker-run SMILES, branch brackets) pass through
         unchanged.
         """
         seq = list(tokens)
-        for pair in self.merges:
-            a, b = pair
-            merged = _MERGE_SEP.join(pair)
-            new_seq: list[str] = []
-            i = 0
-            while i < len(seq):
-                if i < len(seq) - 1 and seq[i] == a and seq[i + 1] == b:
-                    new_seq.append(merged)
-                    i += 2
-                else:
-                    new_seq.append(seq[i])
-                    i += 1
-            seq = new_seq
+        # Single-pass: repeatedly find the lowest-rank (earliest) eligible pair
+        # and merge it, until no more mergeable pairs exist.
+        while True:
+            best_rank = len(self.merges)  # sentinel: worse than any real rank
+            best_i = -1
+            best_merged = ""
+            for i in range(len(seq) - 1):
+                entry = self._merge_rank.get((seq[i], seq[i + 1]))
+                if entry is not None:
+                    rank, merged = entry
+                    if rank < best_rank:
+                        best_rank = rank
+                        best_i = i
+                        best_merged = merged
+            if best_i == -1:
+                break
+            seq = seq[:best_i] + [best_merged] + seq[best_i + 2:]
         return seq
 
     def decode(self, tokens: list[str]) -> list[str]:
