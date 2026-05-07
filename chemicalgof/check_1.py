@@ -1,7 +1,7 @@
 import chemicalgof as cg
 from rdkit import Chem
 
-smiles = "Nc1c(C(=O)N2CCOCC2)sc2nc3c(cc12)CCCCC3"
+smiles = "Cc1ccc2c(sc(-c3ccc(N(C)C)c(S(=O)(=O)O)c3)[n+]2C)c1S(=O)(=O)O"
 
 encoded = cg.encode(smiles)
 decoded = cg.decode(encoded)

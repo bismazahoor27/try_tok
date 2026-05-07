@@ -103,8 +103,8 @@ class BPETrainer:
     def fit(
         self,
         corpus: Iterable[list[str]],
-        max_merges: int = 2048,
-        min_freq: int = 50,
+        max_merges: int = 1000,
+        min_freq: int = 100,
     ) -> 'BPETrainer':
         """Run BPE on *corpus* and populate ``self.merges``.
 
