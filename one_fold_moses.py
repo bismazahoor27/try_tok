@@ -183,8 +183,8 @@ N_EPOCHS       = 30
 N_FOLDS        = 1
 N_SAMPLES      = 30000     # sequences sampled per fold
 CHUNK          = 200_000
-BPE_MAX_MERGES = 1024
-BPE_MIN_FREQ   = 100
+BPE_MAX_MERGES = 2048
+BPE_MIN_FREQ   = 500
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1: Encode full training corpus to base fragSMILES tokens (done once)
