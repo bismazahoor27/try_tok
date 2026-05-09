@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+python one_fold_moses_bpe_diff.py --bpe-variant bpe_right_linker  # default
+python one_fold_moses_bpe_diff.py --bpe-variant bpe
+
 FragSMILES RNN — 1-Fold
 Run with: python run.py
 Outputs saved to ~/working/

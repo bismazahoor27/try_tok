@@ -43,10 +43,19 @@ from collections import Counter
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PATHS  — namespaced by variant so both runs coexist
+#
+# REPO_DIR is resolved from __file__ so it always points to the directory that
+# contains THIS script (and therefore the correct chemicalgof/ package),
+# regardless of where the user cloned the repo or what cwd they run from.
 # ─────────────────────────────────────────────────────────────────────────────
 WORK_DIR = os.path.expanduser(f'~/working/{BPE_VARIANT}')
-REPO_DIR = os.path.expanduser('~/try_tok')
+REPO_DIR = str(Path(__file__).resolve().parent)
 os.makedirs(WORK_DIR, exist_ok=True)
+
+# Put the repo on sys.path immediately — before any chemicalgof import — so
+# that importlib.import_module always resolves from the right location.
+if REPO_DIR not in sys.path:
+    sys.path.insert(0, REPO_DIR)
 
 CHECKPOINT_BASE = os.path.join(WORK_DIR, 'checkpoint_base_tokens.npy')
 BPE_MERGES_PATH = os.path.join(WORK_DIR, 'bpe_merges.json')
@@ -59,13 +68,8 @@ print(f'Repo directory    : {REPO_DIR}')
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 0 — Clone repo if not present
 # ─────────────────────────────────────────────────────────────────────────────
-if not os.path.exists(REPO_DIR):
-    subprocess.run(
-        ['git', 'clone', 'https://github.com/bismazahoor27/try_tok.git', REPO_DIR],
-        check=True
-    )
-else:
-    print(f'Repo already exists at {REPO_DIR}, skipping clone.')
+# The repo is the directory this script lives in — no clone needed.
+print(f'Using repo at {REPO_DIR} (resolved from __file__)')
 
 # Dependencies must be pre-installed in the conda environment.
 # pip install "numpy<2" "pomegranate>=1.0.4" molsets --no-deps
@@ -128,10 +132,9 @@ import moses
 print(f"moses {moses.__version__} imported ✓  ({os.path.dirname(moses.__file__)})")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 8 — Add r-fragSMILES repo to path
+# STEP 8 — r-fragSMILES is already on sys.path (inserted at top of script)
 # ─────────────────────────────────────────────────────────────────────────────
-sys.path.insert(0, REPO_DIR)
-print("r-fragSMILES (try_tok) added to path ✓")
+print(f"r-fragSMILES on sys.path: {REPO_DIR} ✓")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 9 — Core imports + dynamically load the chosen BPE module
