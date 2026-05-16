@@ -138,7 +138,7 @@ class BPETrainer:
         self,
         corpus: Iterable[list[str]],
         max_merges: int = 2048,
-        min_freq: int = 50,
+        min_freq: int = 100,
     ) -> 'BPETrainer':
         work = [list(seq) for seq in corpus]
 

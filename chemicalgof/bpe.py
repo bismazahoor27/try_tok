@@ -35,25 +35,44 @@ from typing import Iterable
 # Ring fragments: any token that is NOT a bare heavy atom, NOT a connector,
 # NOT a bracket-open/close, and NOT a linker-run.
 _RE_CONNECTOR = re.compile(r'^<[0-9]+[RSrs]?>$')
-_RE_BARE_ATOM = re.compile(r'^[BCNOPSFIcnops][l|r]?[\+\-]?[0-9]?$')
-_RE_BRANCH = re.compile(r'^\(|\)$')
+_RE_BARE_ATOM = re.compile(r'^(?:Cl|Br|[BCNOPSFIcnops])[\+\-]?[0-9]?$')
+_RE_BRANCH = re.compile(r'^[()]$')
 
 _MERGE_SEP = '\x00'  # internal separator used to join merged token pairs
 
 
+# Bracket atoms like [NH], [nH], [CH2], [NH4+] are side-chains / linker atoms
+# and must not participate in BPE merges.
+_RE_BRACKET_ATOM = re.compile(r'^\[.*\]$')
+
+
 def _is_mergeable(token: str) -> bool:
-    """Return True if *token* may participate in a BPE merge."""
+    """Return True if *token* may participate in a BPE merge.
+
+    Mergeable:
+        * Connector tokens (<0>, <3R>, …)
+        * Ring-fragment tokens (contain a ring-closure digit)
+        * Already-merged tokens (always contain a ring fragment, hence a digit)
+
+    Non-mergeable:
+        * Branch brackets ( / )
+        * Bare single atoms (C, N, Cl, …)
+        * Bracket atoms ([NH], [nH], [CH2], …)
+        * Multi-atom linker runs (CC, C=O, C#N, COC, …) — no ring digit
+    """
     if _RE_BRANCH.match(token):
         return False
-    # connectors are mergeable (they glue ring pairs together)
     if _RE_CONNECTOR.match(token):
         return True
-    # bare single atoms are NOT mergeable — they are linker atoms or
-    # simple side-chains and should stay as cheap single tokens.
     if _RE_BARE_ATOM.match(token):
         return False
-    # everything else (ring fragments, merged tokens) is mergeable
-    return True
+    if _RE_BRACKET_ATOM.match(token):
+        return False
+    # Ring fragments contain ring-closure digits; linker runs never do.
+    # Already-merged tokens always contain a ring fragment, so also True.
+    if re.search(r'[0-9]', token):
+        return True
+    return False
 
 
 def _count_pairs(corpus: list[list[str]]) -> dict[tuple[str, str], int]:
@@ -237,6 +256,11 @@ class BPETrainer:
         obj = cls()
         with open(path) as fh:
             obj.merges = [tuple(pair) for pair in json.load(fh)]
+        # Restore vocab from the merge rules (all component tokens + merged tokens).
+        for a, b in obj.merges:
+            obj.vocab.add(a)
+            obj.vocab.add(b)
+            obj.vocab.add(_MERGE_SEP.join((a, b)))
         return obj
 
 
@@ -289,24 +313,30 @@ class BPETokenizer:
         return seq
 
     def decode(self, tokens: list[str]) -> list[str]:
-        """Reverse BPE merges to recover the original token sequence."""
+        """Reverse BPE merges to recover the original token sequence.
 
-        def _expand(token: str) -> list[str]:
-            if token in self._split_map:
-                a, b = self._split_map[token]
-                return _expand(a) + _expand(b)
-            return [token]
-
+        Iterative implementation to avoid RecursionError on deeply merged
+        tokens (possible when max_merges is large).
+        """
         result: list[str] = []
         for token in tokens:
-            result.extend(_expand(token))
+            # Use an explicit stack instead of recursion.
+            stack = [token]
+            while stack:
+                t = stack.pop()
+                if t in self._split_map:
+                    a, b = self._split_map[t]
+                    # Push b first so a is processed first (LIFO).
+                    stack.append(b)
+                    stack.append(a)
+                else:
+                    result.append(t)
         return result
 
     def save(self, path: str) -> None:
         """Serialise tokenizer merge rules to a JSON file."""
-        BPETrainer().__class__.save(
-            type('_T', (), {'merges': self.merges})(), path  # type: ignore[arg-type]
-        )
+        with open(path, 'w') as fh:
+            json.dump(self.merges, fh)
 
     @classmethod
     def load(cls, path: str) -> 'BPETokenizer':
